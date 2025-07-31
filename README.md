@@ -50,7 +50,7 @@ jobs:
 ## Testing Your Configuration Locally
 
 ```bash
-npx tsx fan-k-tamura/reviewer-lottery/config-test
+npx github:fan-k-tamura/reviewer-lottery config-test
 ```
 
 ## How It Works
