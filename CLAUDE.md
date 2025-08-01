@@ -84,7 +84,10 @@ The action supports sophisticated selection rules:
 - **default**: Fallback rules for any author
 - **by_author_group**: Rules specific to authors in particular groups
 - **non_group_members**: Rules for authors not in any group
-- Special selectors: `"*"` (all groups), `"!groupname"` (exclude group)
+- Special selectors: 
+  - `"*"` (all groups)
+  - `"!groupname"` (exclude specific group)
+  - `"!group1,group2"` (exclude multiple groups, comma-separated)
 
 ## Development Commands
 
@@ -117,7 +120,8 @@ pnpm lint-fix
 pnpm pack
 
 # Test configuration locally
-npx tsx bin/config-test.js
+npx github:fan-k-tamura/reviewer-lottery config-test
+# Alternative: npx tsx bin/config-test.js
 
 # Run all checks (typecheck, format, lint, pack, test)
 pnpm all
@@ -133,25 +137,25 @@ pnpm all
 ## Code Style
 
 - Uses Biome for formatting and linting
-- Tab indentation, double quotes
+- Space indentation (2 spaces), double quotes
 - Strict TypeScript configuration
 - Organized imports enabled
 
 ## Configuration
 
-The action expects a YAML configuration file at `.github/reviewer-lottery.yml` with:
+The action expects a YAML configuration file at `.github/reviewer-lottery.yml` (or custom path via `config` input) with:
 - `groups`: Array of team definitions with names and usernames
 - `selection_rules`: Complex rules for reviewer assignment based on author group membership
   - `default`: Fallback rules for any author
   - `by_author_group`: Rules specific to authors in particular groups
   - `non_group_members`: Rules for authors not in any group
-- `when_author_in_multiple_groups`: Strategy for handling multiple group membership ("merge" or "first")
+- `when_author_in_multiple_groups`: Strategy for handling multiple group membership ("merge" or "first", default: "merge")
 
 ### Configuration Testing
 
 Use the built-in config tester to validate your configuration:
 ```bash
-npx tsx bin/config-test.js
+npx github:fan-k-tamura/reviewer-lottery config-test
 ```
 
 This CLI tool will:
@@ -160,13 +164,36 @@ This CLI tool will:
 - Show detailed selection results for each scenario
 - Provide statistics on reviewer distribution
 
+### When No Reviewers Are Added
+
+The action will not add reviewers in these cases:
+1. PR author is the only member of all selected groups
+2. All potential reviewers are already assigned to the PR
+3. No matching selection rules for the author
+4. All groups in selection rules have 0 reviewers requested
+
 ## GitHub Action Integration
 
+- Current version: `@v4`
 - Runs on Node.js 20
 - Main entry point: `dist/index.js` (built from TypeScript source)
-- Expects `repo-token` input (GitHub token)
-- Optional `config` input (defaults to `.github/reviewer-lottery.yml`)
-- Optional `pr-author` input (fetched from API if not provided)
+- **Required inputs**:
+  - `repo-token`: GitHub token (usually `${{ secrets.GITHUB_TOKEN }}`)
+- **Optional inputs**:
+  - `config`: Path to config file (defaults to `.github/reviewer-lottery.yml`)
+  - `pr-author`: PR author username (auto-detected if not provided)
+
+### Excluding Bot PRs
+
+To exclude bot-authored PRs from the lottery:
+```yaml
+jobs:
+  assign-reviewer:
+    if: ${{ !endsWith(github.event.pull_request.user.login, '[bot]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: fan-k-tamura/reviewer-lottery@v4
+```
 
 ## Commit Style
 
@@ -199,6 +226,73 @@ refactor: extract reviewer selection logic into separate methods
 chore: update dependencies and build configuration
 ```
 
+## Configuration Examples
+
+### Basic Example
+```yaml
+groups:
+  - name: team
+    usernames:
+      - alice
+      - bob
+      - charlie
+      - diana
+
+selection_rules:
+  default:
+    from:
+      team: 2  # Always assign 2 reviewers from the team
+```
+
+### Advanced Example with Multiple Groups
+```yaml
+groups:
+  - name: backend
+    usernames: [alice, bob, charlie]
+  - name: frontend
+    usernames: [diana, eve]
+  - name: ops
+    usernames: [frank, grace]
+
+selection_rules:
+  # Default rules for any author
+  default:
+    from:
+      backend: 1
+      frontend: 2
+
+  # Rules for non-group members
+  non_group_members:
+    from:
+      backend: 1
+      ops: 1
+
+  # Group-specific rules
+  by_author_group:
+    - group: backend
+      from:
+        backend: 2    # Same team review
+        frontend: 1   # Cross-team review
+
+    - group: frontend
+      from:
+        "*": 2        # From any group
+
+    - group: ops
+      from:
+        ops: 2
+        "!ops": 1     # From any team except ops
+        
+    # Example with multiple group exclusion
+    - group: backend
+      from:
+        backend: 1
+        "!ops,security": 2  # From any team except ops and security
+
+# Control multiple group membership behavior
+when_author_in_multiple_groups: merge  # or "first"
+```
+
 ## Key Dependencies
 
 - `@actions/core`: GitHub Actions SDK for inputs/outputs/logging
@@ -217,3 +311,61 @@ chore: update dependencies and build configuration
 - **Configuration**: `tsup.config.ts`
 - **Target**: Node.js 20
 - **Features**: Bundled, minified, all dependencies included
+
+## Configuration Examples
+
+### Basic Example
+```yaml
+groups:
+  - name: team-a
+    usernames:
+      - alice
+      - bob
+      - charlie
+
+selection_rules:
+  default:
+    from:
+      team-a: 2
+```
+
+### Advanced Example
+```yaml
+groups:
+  - name: frontend
+    usernames: [alice, bob, charlie]
+  - name: backend
+    usernames: [david, eve, alice]  # alice is in both groups
+  - name: ops
+    usernames: [frank, grace]
+  - name: security
+    usernames: [henry, ivan]
+
+selection_rules:
+  # Default rule for any author
+  default:
+    from:
+      frontend: 1
+      backend: 1
+  
+  # Rules for authors in specific groups
+  by_author_group:
+    - group: frontend
+      from:
+        backend: 2    # frontend authors get backend reviewers
+    - group: backend
+      from:
+        frontend: 2   # backend authors get frontend reviewers
+    - group: ops
+      from:
+        "*": 1        # ops authors get 1 reviewer from any group
+        "!ops,security": 0  # but not from ops or security groups
+  
+  # Rules for authors not in any defined group
+  non_group_members:
+    from:
+      "*": 2          # external contributors get 2 reviewers from any group
+
+# How to handle authors in multiple groups
+when_author_in_multiple_groups: merge  # or "first"
+```
