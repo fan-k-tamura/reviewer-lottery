@@ -303,7 +303,7 @@ class ConfigTester {
    * Finds configuration file path
    */
   private findConfigFile(configPath?: string): string {
-    if (configPath) {
+    if (configPath && configPath.trim() !== "") {
       return path.resolve(configPath);
     }
 
@@ -1099,7 +1099,14 @@ class ConfigTester {
  * Parses command line arguments
  */
 function parseCliArgs(): CliOptions {
-  const args = process.argv.slice(2);
+  let args = process.argv.slice(2);
+
+  // When running via npx, the script name might be passed as the first argument
+  // Dynamically check for the script name and remove it if present
+  const scriptName = path.basename(process.argv[1], ".js");
+  if (args.length > 0 && args[0] === scriptName) {
+    args = args.slice(1);
+  }
 
   if (args.includes("--help") || args.includes("-h")) {
     showHelp();

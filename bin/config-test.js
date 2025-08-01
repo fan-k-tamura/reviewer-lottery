@@ -3584,7 +3584,7 @@ var ConfigTester = class {
    * Finds configuration file path
    */
   findConfigFile(configPath) {
-    if (configPath) {
+    if (configPath && configPath.trim() !== "") {
       return import_node_path.default.resolve(configPath);
     }
     const gitRoot = this.findGitRoot(process.cwd());
@@ -4163,7 +4163,11 @@ ${parts.join("\n")}`;
   }
 };
 function parseCliArgs() {
-  const args = process.argv.slice(2);
+  let args = process.argv.slice(2);
+  const scriptName = import_node_path.default.basename(process.argv[1], ".js");
+  if (args.length > 0 && args[0] === scriptName) {
+    args = args.slice(1);
+  }
   if (args.includes("--help") || args.includes("-h")) {
     showHelp();
     process.exit(0);
