@@ -67,6 +67,7 @@ biome.json                  # Linting/formatting configuration
   - Handles multiple group membership strategies ("merge" vs "first")
   - Implements special selector patterns (`"*"`, `"!groupname"`)
   - Returns detailed selection results with applied rules and process steps
+  - Randomness: `pickRandom` uses `crypto.getRandomValues` with rejection sampling for unbiased selection; `pickRandomDeterministic` provides a seeded variant for deterministic testing
 
 ### Service Layer
 
