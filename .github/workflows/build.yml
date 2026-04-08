@@ -3,14 +3,19 @@ on:
   pull_request:
   push:
     branches:
-      - master
+      - main
 
 jobs:
   build: # make sure build/ci work properly
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v1
-    - run: |
-        npm install -g pnpm
-        pnpm install
-        pnpm run all
+    - uses: actions/checkout@v4
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 20
+        cache: pnpm
+    - run: pnpm install
+    - run: pnpm run all

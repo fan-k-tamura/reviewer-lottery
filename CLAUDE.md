@@ -133,6 +133,7 @@ pnpm all
 - Tests are in `__tests__/` directory
 - Run single test: `pnpm test -- --testNamePattern="test name"`
 - Coverage reports generated in `coverage/` directory
+- ESM-only dependencies (`@actions/core`, `@actions/github`) require `moduleNameMapper` and `transformIgnorePatterns` in `jest.config.js` to work with Jest's CJS resolver
 
 ## Code Style
 
@@ -226,85 +227,23 @@ refactor: extract reviewer selection logic into separate methods
 chore: update dependencies and build configuration
 ```
 
-## Configuration Examples
-
-### Basic Example
-```yaml
-groups:
-  - name: team
-    usernames:
-      - alice
-      - bob
-      - charlie
-      - diana
-
-selection_rules:
-  default:
-    from:
-      team: 2  # Always assign 2 reviewers from the team
-```
-
-### Advanced Example with Multiple Groups
-```yaml
-groups:
-  - name: backend
-    usernames: [alice, bob, charlie]
-  - name: frontend
-    usernames: [diana, eve]
-  - name: ops
-    usernames: [frank, grace]
-
-selection_rules:
-  # Default rules for any author
-  default:
-    from:
-      backend: 1
-      frontend: 2
-
-  # Rules for non-group members
-  non_group_members:
-    from:
-      backend: 1
-      ops: 1
-
-  # Group-specific rules
-  by_author_group:
-    - group: backend
-      from:
-        backend: 2    # Same team review
-        frontend: 1   # Cross-team review
-
-    - group: frontend
-      from:
-        "*": 2        # From any group
-
-    - group: ops
-      from:
-        ops: 2
-        "!ops": 1     # From any team except ops
-        
-    # Example with multiple group exclusion
-    - group: backend
-      from:
-        backend: 1
-        "!ops,security": 2  # From any team except ops and security
-
-# Control multiple group membership behavior
-when_author_in_multiple_groups: merge  # or "first"
-```
-
 ## Key Dependencies
 
-- `@actions/core`: GitHub Actions SDK for inputs/outputs/logging
-- `@actions/github`: GitHub API client and context handling
+- `@actions/core` (v3+): GitHub Actions SDK — ESM-only package
+- `@actions/github` (v9+): GitHub API client — ESM-only package
 - `js-yaml`: YAML parsing for configuration
-- `tsup`: Modern TypeScript bundler (replaces deprecated `@vercel/ncc`)
+- `chalk` (v5+): Terminal styling — ESM-only package
+- `tsup`: TypeScript bundler (output: CJS for Node.js 20 runtime compatibility)
 
 ## Build Process
 
+### Supply Chain
+- `.npmrc`: `engine-strict=true` (enforces `engines.node` constraint), `minimum-release-age=7d` (blocks packages published less than 7 days ago)
+- `pnpm.overrides` in `package.json`: pins transitive dependencies to resolve `pnpm audit` vulnerabilities
+
 ### Development Build
-- **TypeScript compilation**: `tsc` compiles to `lib/` directory
-- **Target**: ES6 with CommonJS modules for Node.js compatibility
+- **TypeScript compilation**: `tsc --noEmit` (type checking only, no output files)
+- **Target**: ES2022 with ESM modules (`moduleResolution: bundler`)
 
 ### Distribution Build
 - **Bundler**: `tsup` creates single minified `dist/index.js` file

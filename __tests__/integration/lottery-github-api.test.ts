@@ -1,4 +1,3 @@
-import { getOctokit } from "@actions/github";
 import nock from "nock";
 import type { Pull } from "../../src/interfaces";
 import { Lottery } from "../../src/lottery";
@@ -27,8 +26,6 @@ jest.mock("@actions/core", () => ({
 }));
 
 // Now using TEST_CONFIG from test-helpers
-
-const _octokit = getOctokit("test-token");
 
 // Scenario builders - focusing on user intent and business context
 interface TestScenario {
