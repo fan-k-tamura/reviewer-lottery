@@ -516,7 +516,7 @@ var chalk = createChalk();
 var chalkStderr = createChalk({ level: stderrColor ? stderrColor.level : 0 });
 var source_default = chalk;
 
-// node_modules/.pnpm/js-yaml@4.1.0/node_modules/js-yaml/dist/js-yaml.mjs
+// node_modules/.pnpm/js-yaml@4.1.1/node_modules/js-yaml/dist/js-yaml.mjs
 function isNothing(subject) {
   return typeof subject === "undefined" || subject === null;
 }
@@ -1380,6 +1380,18 @@ function charFromCodepoint(c) {
     (c - 65536 & 1023) + 56320
   );
 }
+function setProperty(object, key, value) {
+  if (key === "__proto__") {
+    Object.defineProperty(object, key, {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value
+    });
+  } else {
+    object[key] = value;
+  }
+}
 var simpleEscapeCheck = new Array(256);
 var simpleEscapeMap = new Array(256);
 for (i = 0; i < 256; i++) {
@@ -1499,7 +1511,7 @@ function mergeMappings(state, destination, source, overridableKeys) {
   for (index = 0, quantity = sourceKeys.length; index < quantity; index += 1) {
     key = sourceKeys[index];
     if (!_hasOwnProperty$1.call(destination, key)) {
-      destination[key] = source[key];
+      setProperty(destination, key, source[key]);
       overridableKeys[key] = true;
     }
   }
@@ -1539,16 +1551,7 @@ function storeMappingPair(state, _result, overridableKeys, keyTag, keyNode, valu
       state.position = startPos || state.position;
       throwError(state, "duplicated mapping key");
     }
-    if (keyNode === "__proto__") {
-      Object.defineProperty(_result, keyNode, {
-        configurable: true,
-        enumerable: true,
-        writable: true,
-        value: valueNode
-      });
-    } else {
-      _result[keyNode] = valueNode;
-    }
+    setProperty(_result, keyNode, valueNode);
     delete overridableKeys[keyNode];
   }
   return _result;
@@ -3136,7 +3139,6 @@ var jsYaml = {
   safeLoadAll,
   safeDump
 };
-var js_yaml_default = jsYaml;
 
 // src/core/reviewer-selector.ts
 var DEFAULT_MULTIPLE_GROUP_STRATEGY = "merge";
@@ -3419,8 +3421,12 @@ var ReviewerSelector = class {
 
 // src/config-test.ts
 var ConfigTester = class {
+  config;
+  reviewerSelector;
+  simulationRuns;
+  colorEnabled;
+  configWarnings = [];
   constructor(configPath, simulationRuns = 1e3, colorEnabled = true) {
-    this.configWarnings = [];
     this.simulationRuns = simulationRuns;
     this.colorEnabled = colorEnabled;
     this.config = this.loadConfig(configPath);
@@ -3448,7 +3454,7 @@ var ConfigTester = class {
     console.log(`Loading config from: ${fullPath}
 `);
     const content = import_node_fs.default.readFileSync(fullPath, "utf8");
-    const config = js_yaml_default.load(content);
+    const config = jsYaml.load(content);
     this.validateConfig(config);
     return config;
   }
@@ -4253,5 +4259,5 @@ if (require.main === module) {
 /*! Bundled license information:
 
 js-yaml/dist/js-yaml.mjs:
-  (*! js-yaml 4.1.0 https://github.com/nodeca/js-yaml @license MIT *)
+  (*! js-yaml 4.1.1 https://github.com/nodeca/js-yaml @license MIT *)
 */

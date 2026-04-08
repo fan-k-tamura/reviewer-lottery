@@ -32,9 +32,19 @@
     "node": ">=20.0.0 <21.0.0"
   },
   "dependencies": {
-    "@actions/core": "^1.9.1",
-    "@actions/github": "^6.0.1",
+    "@actions/core": "^3.0.0",
+    "@actions/github": "^9.0.0",
     "chalk": "^5.4.1"
+  },
+  "pnpm": {
+    "overrides": {
+      "glob": ">=10.5.0",
+      "minimatch": ">=9.0.7",
+      "rollup": ">=4.59.0",
+      "picomatch": ">=4.0.4",
+      "js-yaml": ">=4.1.1",
+      "brace-expansion": ">=2.0.3"
+    }
   },
   "devDependencies": {
     "@biomejs/biome": "2.1.1",
