@@ -3149,9 +3149,13 @@ var ReviewerSelector = class {
   /**
    * Main reviewer selection logic
    */
-  selectReviewers(author, existingReviewers = []) {
+  selectReviewers(author, existingReviewers = [], labels = []) {
     const authorGroup = this.getAuthorGroup(author);
-    const appliedRule = this.determineApplicableRule(author, authorGroup);
+    const appliedRule = this.determineApplicableRule(
+      author,
+      authorGroup,
+      labels
+    );
     if (!appliedRule) {
       return {
         selectedReviewers: [],
@@ -3198,10 +3202,13 @@ var ReviewerSelector = class {
   }
   /**
    * Determine which rule applies to the author
+   * Priority: by_label > by_author_group > non_group_members > default
    */
-  determineApplicableRule(author, authorGroup) {
+  determineApplicableRule(author, authorGroup, labels = []) {
     const rules = this.config.selection_rules;
     if (!rules) return null;
+    const labelRule = this.handleLabelRule(rules, labels);
+    if (labelRule) return labelRule;
     const authorGroups = this.getAuthorGroups(author);
     if (authorGroups.length === 0) {
       return this.handleNonGroupMemberRule(rules);
@@ -3210,6 +3217,37 @@ var ReviewerSelector = class {
       return this.handleMultipleGroupsRule(rules, authorGroups);
     }
     return this.handleSingleGroupRule(rules, authorGroup);
+  }
+  /**
+   * Handle label-based selection rules
+   * When multiple labels match, merge from clauses taking max per group
+   */
+  handleLabelRule(rules, labels) {
+    if (!rules.by_label || labels.length === 0) return null;
+    const normalizedLabels = labels.map((l) => l.trim().toLowerCase());
+    const matchingRules = rules.by_label.filter(
+      (rule) => normalizedLabels.includes(rule.label.trim().toLowerCase())
+    );
+    if (matchingRules.length === 0) return null;
+    const matchedLabels = matchingRules.map((r) => r.label);
+    if (matchingRules.length === 1) {
+      return {
+        type: "by_label",
+        rule: matchingRules[0].from,
+        matchedLabels
+      };
+    }
+    const mergedRule = {};
+    for (const matchingRule of matchingRules) {
+      for (const [group, count] of Object.entries(matchingRule.from)) {
+        mergedRule[group] = Math.max(mergedRule[group] || 0, count);
+      }
+    }
+    return {
+      type: "merged_labels",
+      rule: mergedRule,
+      matchedLabels
+    };
   }
   /**
    * Handle rule for authors not in any group
@@ -3400,8 +3438,8 @@ var ReviewerSelector = class {
   /**
    * Public method for testing: Select reviewers with rules
    */
-  selectReviewersWithRules(author, existingReviewers) {
-    const result = this.selectReviewers(author, existingReviewers);
+  selectReviewersWithRules(author, existingReviewers, labels = []) {
+    const result = this.selectReviewers(author, existingReviewers, labels);
     return result.selectedReviewers;
   }
   /**
@@ -3482,6 +3520,16 @@ var ConfigTester = class {
    */
   checkForDuplicateSelections(config) {
     const groupNames = config.groups.map((g) => g.name);
+    if (config.selection_rules?.by_label) {
+      for (const rule of config.selection_rules.by_label) {
+        const duplicateWarnings = this.checkRuleForDuplicates(
+          rule.from,
+          groupNames,
+          `by_label[${rule.label}]`
+        );
+        this.configWarnings.push(...duplicateWarnings);
+      }
+    }
     if (config.selection_rules?.by_author_group) {
       for (const rule of config.selection_rules.by_author_group) {
         const duplicateWarnings = this.checkRuleForDuplicates(
@@ -3661,6 +3709,7 @@ var ConfigTester = class {
     const userGroupCount = this.buildUserGroupMapping();
     this.addGroupScenarios(scenarios, userGroupCount, processedUsers);
     this.addMultiGroupScenarios(scenarios, userGroupCount);
+    this.addLabelScenarios(scenarios);
     this.addExternalUserScenario(scenarios);
     return scenarios;
   }
@@ -3716,6 +3765,34 @@ var ConfigTester = class {
     }
   }
   /**
+   * Adds label-based scenarios if by_label rules are configured
+   */
+  addLabelScenarios(scenarios) {
+    if (!this.config.selection_rules?.by_label) return;
+    const representativeAuthor = this.config.groups[0]?.usernames[0] ?? "test-user";
+    for (const labelRule of this.config.selection_rules.by_label) {
+      scenarios.push({
+        id: `label-${labelRule.label}`,
+        author: representativeAuthor,
+        authorGroup: this.reviewerSelector.getAuthorGroup(representativeAuthor),
+        description: `PR with label "${labelRule.label}" by ${representativeAuthor}`,
+        labels: [labelRule.label]
+      });
+    }
+    if (this.config.selection_rules.by_label.length > 1) {
+      const allLabels = this.config.selection_rules.by_label.map(
+        (r) => r.label
+      );
+      scenarios.push({
+        id: "label-all-combined",
+        author: representativeAuthor,
+        authorGroup: this.reviewerSelector.getAuthorGroup(representativeAuthor),
+        description: `PR with all labels (${allLabels.join(", ")}) by ${representativeAuthor}`,
+        labels: allLabels
+      });
+    }
+  }
+  /**
    * Adds external user scenario
    */
   addExternalUserScenario(scenarios) {
@@ -3762,7 +3839,10 @@ var ConfigTester = class {
     const selectionCount = /* @__PURE__ */ new Map();
     const groupSelectionCount = /* @__PURE__ */ new Map();
     for (let i = 0; i < this.simulationRuns; i++) {
-      const { selectedReviewers, selectionDetails } = await this.simulateReviewerSelection(scenario.author);
+      const { selectedReviewers, selectionDetails } = await this.simulateReviewerSelection(
+        scenario.author,
+        scenario.labels ?? []
+      );
       simulationResults.push(selectedReviewers);
       this.updateSelectionCounts(
         selectedReviewers,
@@ -3797,8 +3877,8 @@ var ConfigTester = class {
       }
     }
   }
-  async simulateReviewerSelection(author) {
-    const result = this.reviewerSelector.selectReviewers(author, []);
+  async simulateReviewerSelection(author, labels = []) {
+    const result = this.reviewerSelector.selectReviewers(author, [], labels);
     const selectionDetails = /* @__PURE__ */ new Map();
     for (const step of result.process) {
       for (const selectedReviewer of step.selected) {
@@ -3834,6 +3914,14 @@ var ConfigTester = class {
       );
     }
     console.log(this.colorize("\nSelection Rules:", "header"));
+    if (this.config.selection_rules?.by_label) {
+      for (const rule of this.config.selection_rules.by_label) {
+        console.log(
+          `  \u2514\u2500 label ${this.colorize(`"${rule.label}"`, "group")}:`,
+          JSON.stringify(rule.from)
+        );
+      }
+    }
     if (this.config.selection_rules?.default) {
       console.log(
         "  \u2514\u2500 default:",
@@ -3870,7 +3958,8 @@ var ConfigTester = class {
 ${this.colorize(groupName, "group")}:`);
     console.log(this.colorize("\u2500".repeat(80), "info"));
     const firstResult = groupResults[0];
-    if (firstResult) {
+    const isLabelGroup = firstResult?.scenario.labels && firstResult.scenario.labels.length > 0;
+    if (firstResult && !isLabelGroup) {
       const rule = this.getSelectionRuleForAuthor(
         firstResult.scenario.author,
         firstResult.scenario.authorGroup
@@ -3889,8 +3978,9 @@ ${this.colorize(groupName, "group")}:`);
   displayAuthorResults(result) {
     const groups = this.getUserGroups(result.scenario.author);
     const groupInfo = groups.length > 1 ? ` (${groups.join(", ")})` : "";
+    const label = result.scenario.labels && result.scenario.labels.length > 0 ? ` ${this.colorize(`[${result.scenario.description}]`, "info")}` : "";
     console.log(`
-  ${result.scenario.author}${groupInfo}:`);
+  ${result.scenario.author}${groupInfo}:${label}`);
     console.log(`    Selection Distribution:`);
     const { selectionsByGroup } = this.processGroupSelectionData(result);
     const sortedGroups = this.sortGroupsByRuleOrder(
@@ -4035,14 +4125,19 @@ ${parts.join("\n")}`;
   groupResultsByAuthorGroup(results) {
     const grouped = /* @__PURE__ */ new Map();
     for (const result of results) {
-      const authorGroups = this.getUserGroups(result.scenario.author);
       let groupName;
-      if (authorGroups.length === 0) {
-        groupName = "non_group_members";
-      } else if (authorGroups.length === 1) {
-        groupName = `[${authorGroups[0]}] Authors`;
+      if (result.scenario.labels && result.scenario.labels.length > 0) {
+        const labelNames = result.scenario.labels.map((l) => `"${l}"`).join(", ");
+        groupName = `Label: ${labelNames}`;
       } else {
-        groupName = `[${authorGroups.join(" + ")}] Authors`;
+        const authorGroups = this.getUserGroups(result.scenario.author);
+        if (authorGroups.length === 0) {
+          groupName = "non_group_members";
+        } else if (authorGroups.length === 1) {
+          groupName = `[${authorGroups[0]}] Authors`;
+        } else {
+          groupName = `[${authorGroups.join(" + ")}] Authors`;
+        }
       }
       if (!grouped.has(groupName)) {
         grouped.set(groupName, []);

@@ -5,11 +5,18 @@ export interface ReviewerSelectionResult {
 }
 
 export interface AppliedRule {
-  type: "default" | "by_author_group" | "non_group_members" | "merged_groups";
+  type:
+    | "default"
+    | "by_author_group"
+    | "non_group_members"
+    | "merged_groups"
+    | "by_label"
+    | "merged_labels";
   index?: number;
   rule: Record<string, number>;
   mergedFromGroups?: string[];
   usedGroup?: string;
+  matchedLabels?: string[];
 }
 
 export interface SelectionStep {

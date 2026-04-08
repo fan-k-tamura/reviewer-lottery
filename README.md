@@ -8,6 +8,7 @@ This is a github action to add automatic reviewer lottery to your pull requests.
 |-------|-------------|---------|
 | `repo-token` | GitHub token (required) | |
 | `config` | Path to configuration file | `.github/reviewer-lottery.yml` |
+| `pr-author` | PR author username (optional, auto-detected if not provided) | |
 
 ## Quick Start
 
@@ -34,7 +35,7 @@ selection_rules:
 name: "Reviewer lottery"
 on:
   pull_request_target:
-    types: [opened, ready_for_review, reopened]
+    types: [opened, ready_for_review, reopened, labeled]
 
 jobs:
   test:
@@ -46,6 +47,8 @@ jobs:
         repo-token: ${{ secrets.GITHUB_TOKEN }}
         # config: 'path/to/your/config.yml'  # Optional: custom config file path
 ```
+
+> **Note**: The `labeled` event type is needed for `by_label` selection rules to trigger when labels are added after PR creation.
 
 ## Testing Your Configuration Locally
 
@@ -121,10 +124,11 @@ The configuration uses `selection_rules` to provide maximum flexibility for revi
 
 #### Selection Rules Overview
 
-The action supports three types of selection rules:
-- **`default`**: Fallback rules for any author
+The action supports four types of selection rules:
+- **`by_label`**: Rules triggered by PR labels (highest priority)
 - **`by_author_group`**: Rules specific to authors in particular groups
 - **`non_group_members`**: Rules for authors not in any group
+- **`default`**: Fallback rules for any author
 
 #### Complete Configuration Example
 
@@ -143,9 +147,23 @@ groups:
     usernames:
       - frank
       - grace
+  - name: security
+    usernames:
+      - henry
+      - ivan
 
 selection_rules:
-  # Default rules for authors not in any group or when no group-specific rule exists
+  # Label-triggered rules (highest priority)
+  # When multiple labels match, from clauses are merged taking max per group
+  by_label:
+    - label: needs-security-review
+      from:
+        security: 2   # PRs with this label get 2 security reviewers
+    - label: needs-frontend-review
+      from:
+        frontend: 2   # PRs with this label get 2 frontend reviewers
+
+  # Fallback rules when no more specific rule matches
   default:
     from:
       backend: 1      # 1 reviewer from backend team
@@ -184,9 +202,10 @@ selection_rules:
 
 When assigning reviewers, the following priority is used:
 
-1. **For authors in a group**: Looks for matching rule in `by_author_group`, falls back to `default`
-2. **For authors not in any group**: Uses `non_group_members` if defined, falls back to `default`
-3. **No reviewers assigned**: If no `from` clause is found or is empty
+1. **Label-based rules** (`by_label`): If the PR has matching labels, these rules take effect and all other rules are skipped. When multiple labels match, `from` clauses are merged taking the maximum count per group. Label matching is case-insensitive.
+2. **For authors in a group**: Looks for matching rule in `by_author_group`, falls back to `default`
+3. **For authors not in any group**: Uses `non_group_members` if defined, falls back to `default`
+4. **No reviewers assigned**: If no `from` clause is found or is empty
 
 #### Multiple Group Membership
 
@@ -306,17 +325,13 @@ You can exclude PRs created by bots (like Dependabot, Renovate, etc.) by adding 
 name: "Reviewer lottery"
 on:
   pull_request_target:
-    types: [opened, ready_for_review, reopened]
+    types: [opened, ready_for_review, reopened, labeled]
 
 jobs:
   test:
     runs-on: ubuntu-latest
     # Skip if PR is created by bots
-    if: |
-      github.event.pull_request.user.login != 'dependabot[bot]' &&
-      github.event.pull_request.user.login != 'renovate[bot]' &&
-      github.event.pull_request.user.login != 'github-actions[bot]' &&
-      !contains(github.event.pull_request.user.login, '[bot]')
+    if: ${{ !endsWith(github.event.pull_request.user.login, '[bot]') }}
 
     steps:
     - uses: actions/checkout@v4

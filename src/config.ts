@@ -12,10 +12,16 @@ interface SelectionRule {
   from: Record<string, number>;
 }
 
+interface LabelRule {
+  label: string;
+  from: Record<string, number>;
+}
+
 interface SelectionRules {
   default?: {
     from: Record<string, number>;
   };
+  by_label?: LabelRule[];
   by_author_group?: SelectionRule[];
   non_group_members?: {
     from: Record<string, number>;
@@ -74,6 +80,24 @@ const validateSelectionRules = (
   // Validate default rule
   if (rules.default) {
     validateFromClause(rules.default.from, groupNames);
+  }
+
+  // Validate by_label rules
+  if (rules.by_label) {
+    const seenLabels = new Set<string>();
+    for (const rule of rules.by_label) {
+      if (!rule.label || typeof rule.label !== "string") {
+        throw new Error(
+          "Each by_label rule must have a 'label' string property",
+        );
+      }
+      const normalized = rule.label.trim().toLowerCase();
+      if (seenLabels.has(normalized)) {
+        throw new Error(`Duplicate label '${rule.label}' in by_label rules`);
+      }
+      seenLabels.add(normalized);
+      validateFromClause(rule.from, groupNames);
+    }
   }
 
   // Validate by_author_group rules

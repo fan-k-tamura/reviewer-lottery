@@ -10,6 +10,10 @@ interface SelectionRules {
   default?: {
     from: Record<string, number>;
   };
+  by_label?: Array<{
+    label: string;
+    from: Record<string, number>;
+  }>;
   by_author_group?: Array<{
     group: string;
     from: Record<string, number>;
@@ -34,9 +38,14 @@ export class ReviewerSelector {
   selectReviewers(
     author: string,
     existingReviewers: string[] = [],
+    labels: string[] = [],
   ): ReviewerSelectionResult {
     const authorGroup = this.getAuthorGroup(author);
-    const appliedRule = this.determineApplicableRule(author, authorGroup);
+    const appliedRule = this.determineApplicableRule(
+      author,
+      authorGroup,
+      labels,
+    );
 
     if (!appliedRule) {
       return {
@@ -89,13 +98,19 @@ export class ReviewerSelector {
 
   /**
    * Determine which rule applies to the author
+   * Priority: by_label > by_author_group > non_group_members > default
    */
   private determineApplicableRule(
     author: string,
     authorGroup: string | null,
+    labels: string[] = [],
   ): AppliedRule | null {
     const rules = this.config.selection_rules;
     if (!rules) return null;
+
+    // Check label-based rules first (highest priority)
+    const labelRule = this.handleLabelRule(rules, labels);
+    if (labelRule) return labelRule;
 
     const authorGroups = this.getAuthorGroups(author);
 
@@ -108,6 +123,50 @@ export class ReviewerSelector {
     }
 
     return this.handleSingleGroupRule(rules, authorGroup);
+  }
+
+  /**
+   * Handle label-based selection rules
+   * When multiple labels match, merge from clauses taking max per group
+   */
+  private handleLabelRule(
+    rules: SelectionRules,
+    labels: string[],
+  ): AppliedRule | null {
+    if (!rules.by_label || labels.length === 0) return null;
+
+    // Case-insensitive matching — GitHub label names are user-facing and
+    // casing may differ between the config file and the actual PR label.
+    const normalizedLabels = labels.map((l) => l.trim().toLowerCase());
+    const matchingRules = rules.by_label.filter((rule) =>
+      normalizedLabels.includes(rule.label.trim().toLowerCase()),
+    );
+
+    if (matchingRules.length === 0) return null;
+
+    const matchedLabels = matchingRules.map((r) => r.label);
+
+    if (matchingRules.length === 1) {
+      return {
+        type: "by_label",
+        rule: matchingRules[0].from,
+        matchedLabels,
+      };
+    }
+
+    // Multiple labels match — merge from clauses (max per group)
+    const mergedRule: Record<string, number> = {};
+    for (const matchingRule of matchingRules) {
+      for (const [group, count] of Object.entries(matchingRule.from)) {
+        mergedRule[group] = Math.max(mergedRule[group] || 0, count);
+      }
+    }
+
+    return {
+      type: "merged_labels",
+      rule: mergedRule,
+      matchedLabels,
+    };
   }
 
   /**
@@ -398,8 +457,9 @@ export class ReviewerSelector {
   selectReviewersWithRules(
     author: string,
     existingReviewers: string[],
+    labels: string[] = [],
   ): string[] {
-    const result = this.selectReviewers(author, existingReviewers);
+    const result = this.selectReviewers(author, existingReviewers, labels);
     return result.selectedReviewers;
   }
 
