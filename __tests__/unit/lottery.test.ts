@@ -901,4 +901,264 @@ describe("Lottery Business Logic", () => {
       });
     });
   });
+
+  describe("label-based selection rules", () => {
+    test("applies label-specific from clause when label matches", () => {
+      const lottery = new Lottery({
+        logger: createMockLogger(),
+        actionOutputs: createMockActionOutputs(),
+        githubService: createMockGitHubService(),
+        config: {
+          groups: [
+            { name: "frontend", usernames: ["alice", "bob"] },
+            { name: "backend", usernames: ["charlie", "diana"] },
+            { name: "security", usernames: ["eve", "frank"] },
+          ],
+          selection_rules: {
+            by_label: [
+              { label: "needs-security-review", from: { security: 2 } },
+            ],
+            default: { from: { backend: 1 } },
+          },
+        },
+        env: { repository: "test/repo", ref: "refs/pull/1/head" },
+      });
+
+      const result = lottery.reviewerSelectorForTesting.selectReviewers(
+        "alice",
+        [],
+        ["needs-security-review"],
+      );
+
+      expect(result.appliedRule?.type).toBe("by_label");
+      expect(result.appliedRule?.matchedLabels).toEqual([
+        "needs-security-review",
+      ]);
+      expect(result.appliedRule?.rule).toEqual({ security: 2 });
+      expect(result.selectedReviewers).toHaveLength(2);
+      result.selectedReviewers.forEach((r) => {
+        expect(["eve", "frank"]).toContain(r);
+      });
+    });
+
+    test("merges from clauses when multiple labels match (max per group)", () => {
+      const lottery = new Lottery({
+        logger: createMockLogger(),
+        actionOutputs: createMockActionOutputs(),
+        githubService: createMockGitHubService(),
+        config: {
+          groups: [
+            { name: "frontend", usernames: ["alice", "bob", "charlie"] },
+            { name: "backend", usernames: ["diana", "eve", "frank"] },
+            { name: "security", usernames: ["grace", "henry"] },
+          ],
+          selection_rules: {
+            by_label: [
+              {
+                label: "needs-frontend-review",
+                from: { frontend: 2, backend: 1 },
+              },
+              {
+                label: "needs-security-review",
+                from: { security: 1, backend: 2 },
+              },
+            ],
+            default: { from: { backend: 1 } },
+          },
+        },
+        env: { repository: "test/repo", ref: "refs/pull/1/head" },
+      });
+
+      const result = lottery.reviewerSelectorForTesting.selectReviewers(
+        "diana",
+        [],
+        ["needs-frontend-review", "needs-security-review"],
+      );
+
+      expect(result.appliedRule?.type).toBe("merged_labels");
+      expect(result.appliedRule?.matchedLabels).toEqual([
+        "needs-frontend-review",
+        "needs-security-review",
+      ]);
+      // Merged: frontend: max(2,0)=2, backend: max(1,2)=2, security: max(0,1)=1
+      expect(result.appliedRule?.rule).toEqual({
+        frontend: 2,
+        backend: 2,
+        security: 1,
+      });
+    });
+
+    test("falls through to by_author_group when no label matches", () => {
+      const lottery = new Lottery({
+        logger: createMockLogger(),
+        actionOutputs: createMockActionOutputs(),
+        githubService: createMockGitHubService(),
+        config: {
+          groups: [
+            { name: "frontend", usernames: ["alice", "bob"] },
+            { name: "backend", usernames: ["charlie", "diana"] },
+          ],
+          selection_rules: {
+            by_label: [
+              { label: "needs-security-review", from: { frontend: 2 } },
+            ],
+            by_author_group: [{ group: "backend", from: { frontend: 1 } }],
+            default: { from: { backend: 1 } },
+          },
+        },
+        env: { repository: "test/repo", ref: "refs/pull/1/head" },
+      });
+
+      const result = lottery.reviewerSelectorForTesting.selectReviewers(
+        "charlie",
+        [],
+        ["unrelated-label"],
+      );
+
+      expect(result.appliedRule?.type).toBe("by_author_group");
+      expect(result.appliedRule?.matchedLabels).toBeUndefined();
+    });
+
+    test("falls through to default when no by_label configured", () => {
+      const lottery = new Lottery({
+        logger: createMockLogger(),
+        actionOutputs: createMockActionOutputs(),
+        githubService: createMockGitHubService(),
+        config: {
+          groups: [{ name: "backend", usernames: ["alice", "bob"] }],
+          selection_rules: {
+            default: { from: { backend: 1 } },
+          },
+        },
+        env: { repository: "test/repo", ref: "refs/pull/1/head" },
+      });
+
+      const result = lottery.reviewerSelectorForTesting.selectReviewers(
+        "alice",
+        [],
+        ["some-label"],
+      );
+
+      expect(result.appliedRule?.type).toBe("default");
+    });
+
+    test("label rule with special selectors works correctly", () => {
+      const lottery = new Lottery({
+        logger: createMockLogger(),
+        actionOutputs: createMockActionOutputs(),
+        githubService: createMockGitHubService(),
+        config: {
+          groups: [
+            { name: "frontend", usernames: ["alice", "bob"] },
+            { name: "backend", usernames: ["charlie", "diana"] },
+            { name: "ops", usernames: ["eve"] },
+          ],
+          selection_rules: {
+            by_label: [{ label: "needs-review", from: { "*": 2, "!ops": 1 } }],
+          },
+        },
+        env: { repository: "test/repo", ref: "refs/pull/1/head" },
+      });
+
+      const result = lottery.reviewerSelectorForTesting.selectReviewers(
+        "alice",
+        [],
+        ["needs-review"],
+      );
+
+      expect(result.appliedRule?.type).toBe("by_label");
+      expect(result.selectedReviewers.length).toBeGreaterThan(0);
+      expect(result.selectedReviewers).not.toContain("alice");
+    });
+
+    test("label rule takes priority over by_author_group", () => {
+      const lottery = new Lottery({
+        logger: createMockLogger(),
+        actionOutputs: createMockActionOutputs(),
+        githubService: createMockGitHubService(),
+        config: {
+          groups: [
+            { name: "frontend", usernames: ["alice", "bob"] },
+            { name: "backend", usernames: ["charlie", "diana"] },
+          ],
+          selection_rules: {
+            by_label: [{ label: "urgent", from: { frontend: 2, backend: 2 } }],
+            by_author_group: [{ group: "frontend", from: { backend: 1 } }],
+            default: { from: { backend: 1 } },
+          },
+        },
+        env: { repository: "test/repo", ref: "refs/pull/1/head" },
+      });
+
+      // alice is in frontend group, but label rule should take priority
+      const result = lottery.reviewerSelectorForTesting.selectReviewers(
+        "alice",
+        [],
+        ["urgent"],
+      );
+
+      expect(result.appliedRule?.type).toBe("by_label");
+      expect(result.appliedRule?.rule).toEqual({
+        frontend: 2,
+        backend: 2,
+      });
+    });
+
+    test("existing behavior unchanged when no labels provided", () => {
+      const lottery = new Lottery({
+        logger: createMockLogger(),
+        actionOutputs: createMockActionOutputs(),
+        githubService: createMockGitHubService(),
+        config: {
+          groups: [
+            { name: "backend", usernames: ["alice", "bob", "charlie"] },
+            { name: "frontend", usernames: ["diana", "eve"] },
+          ],
+          selection_rules: {
+            by_label: [{ label: "urgent", from: { frontend: 2, backend: 2 } }],
+            by_author_group: [{ group: "backend", from: { frontend: 1 } }],
+            default: { from: { backend: 1 } },
+          },
+        },
+        env: { repository: "test/repo", ref: "refs/pull/1/head" },
+      });
+
+      // No labels — should use by_author_group
+      const result = lottery.reviewerSelectorForTesting.selectReviewers(
+        "alice",
+        [],
+      );
+
+      expect(result.appliedRule?.type).toBe("by_author_group");
+    });
+
+    test("label matching is case-insensitive", () => {
+      const lottery = new Lottery({
+        logger: createMockLogger(),
+        actionOutputs: createMockActionOutputs(),
+        githubService: createMockGitHubService(),
+        config: {
+          groups: [{ name: "security", usernames: ["alice", "bob"] }],
+          selection_rules: {
+            by_label: [
+              { label: "needs-security-review", from: { security: 1 } },
+            ],
+            default: { from: { security: 1 } },
+          },
+        },
+        env: { repository: "test/repo", ref: "refs/pull/1/head" },
+      });
+
+      const result = lottery.reviewerSelectorForTesting.selectReviewers(
+        "alice",
+        [],
+        ["Needs-Security-Review"],
+      );
+
+      expect(result.appliedRule?.type).toBe("by_label");
+      expect(result.appliedRule?.matchedLabels).toEqual([
+        "needs-security-review",
+      ]);
+    });
+  });
 });

@@ -31,10 +31,9 @@ __tests__/
 └── test-helpers.ts          # Test utility functions
 
 examples/
-├── sample-config.yml        # Basic configuration example
-├── advanced-selection-patterns.yml
-├── complex-group-patterns.yml
-└── organizational-hierarchy.yml
+├── sample-config.yml             # Basic configuration example
+├── label-based-patterns.yml      # Label-based selection rules example
+└── special-patterns.yml          # Special selector patterns (*, !group)
 
 bin/                         # CLI executables
 action.yml                   # GitHub Action definition
@@ -80,11 +79,12 @@ biome.json                  # Linting/formatting configuration
 
 ### Selection Rules Architecture
 
-The action supports sophisticated selection rules:
-- **default**: Fallback rules for any author
-- **by_author_group**: Rules specific to authors in particular groups
-- **non_group_members**: Rules for authors not in any group
-- Special selectors: 
+The action supports sophisticated selection rules with the following priority order:
+1. **by_label**: Rules triggered by PR labels (highest priority). When multiple labels match, `from` clauses are merged taking the maximum count per group
+2. **by_author_group**: Rules specific to authors in particular groups
+3. **non_group_members**: Rules for authors not in any group
+4. **default**: Fallback rules for any author
+- Special selectors (usable in any rule's `from` clause):
   - `"*"` (all groups)
   - `"!groupname"` (exclude specific group)
   - `"!group1,group2"` (exclude multiple groups, comma-separated)
@@ -120,8 +120,9 @@ pnpm lint-fix
 pnpm pack
 
 # Test configuration locally
-npx github:fan-k-tamura/reviewer-lottery config-test
-# Alternative: npx tsx bin/config-test.js
+pnpm config-test
+pnpm config-test examples/label-based-patterns.yml
+# Remote: npx github:fan-k-tamura/reviewer-lottery config-test
 
 # Run all checks (typecheck, format, lint, pack, test)
 pnpm all
@@ -146,17 +147,20 @@ pnpm all
 
 The action expects a YAML configuration file at `.github/reviewer-lottery.yml` (or custom path via `config` input) with:
 - `groups`: Array of team definitions with names and usernames
-- `selection_rules`: Complex rules for reviewer assignment based on author group membership
-  - `default`: Fallback rules for any author
+- `selection_rules`: Complex rules for reviewer assignment based on labels and author group membership
+  - `by_label`: Rules triggered by PR labels (highest priority)
   - `by_author_group`: Rules specific to authors in particular groups
   - `non_group_members`: Rules for authors not in any group
+  - `default`: Fallback rules for any author
 - `when_author_in_multiple_groups`: Strategy for handling multiple group membership ("merge" or "first", default: "merge")
 
 ### Configuration Testing
 
 Use the built-in config tester to validate your configuration:
 ```bash
-npx github:fan-k-tamura/reviewer-lottery config-test
+pnpm config-test
+pnpm config-test path/to/config.yml
+# Remote: npx github:fan-k-tamura/reviewer-lottery config-test
 ```
 
 This CLI tool will:
@@ -183,6 +187,17 @@ The action will not add reviewers in these cases:
 - **Optional inputs**:
   - `config`: Path to config file (defaults to `.github/reviewer-lottery.yml`)
   - `pr-author`: PR author username (auto-detected if not provided)
+
+### Using Label-Based Rules
+
+To use `by_label` rules, the workflow must trigger on the `labeled` activity type so the action re-runs when labels are added after PR creation:
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+```
+
+Label matching is case-insensitive — `Needs-Security-Review` in the PR will match `needs-security-review` in the config.
 
 ### Excluding Bot PRs
 
@@ -281,12 +296,21 @@ groups:
     usernames: [henry, ivan]
 
 selection_rules:
+  # Rules triggered by PR labels (highest priority)
+  by_label:
+    - label: needs-security-review
+      from:
+        security: 2   # PRs with this label get 2 security reviewers
+    - label: needs-frontend-review
+      from:
+        frontend: 2   # PRs with this label get 2 frontend reviewers
+
   # Default rule for any author
   default:
     from:
       frontend: 1
       backend: 1
-  
+
   # Rules for authors in specific groups
   by_author_group:
     - group: frontend

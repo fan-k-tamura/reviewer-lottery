@@ -154,10 +154,15 @@ export class Lottery {
     const author = await this.getPRAuthor();
     const existingReviewers = await this.getExistingReviewers();
 
+    const labels = this.prInfo?.labels ?? [];
+
     this.logger.info(`PR author: ${author}`);
     this.logger.info(
       `Existing reviewers: ${existingReviewers.length > 0 ? existingReviewers.join(", ") : "none"}`,
     );
+    if (labels.length > 0) {
+      this.logger.info(`PR labels: ${labels.join(", ")}`);
+    }
 
     try {
       if (this.config.selection_rules) {
@@ -168,6 +173,7 @@ export class Lottery {
         const selectionResult = this.reviewerSelector.selectReviewers(
           author,
           existingReviewers,
+          labels,
         );
 
         // Set output for applied rule info
@@ -177,6 +183,14 @@ export class Lottery {
           "existing-reviewers",
           existingReviewers.join(","),
         );
+
+        // Set matched labels output
+        if (selectionResult.appliedRule?.matchedLabels) {
+          this.actionOutputs.setOutput(
+            "matched-labels",
+            selectionResult.appliedRule.matchedLabels.join(","),
+          );
+        }
 
         // Log the selection process
         for (const step of selectionResult.process) {

@@ -14,6 +14,7 @@
     "lint": "biome check",
     "lint-fix": "biome check --write",
     "pack": "tsup",
+    "config-test": "node bin/config-test.js",
     "test": "jest",
     "all": "pnpm run typecheck && pnpm run format && pnpm run lint && pnpm run pack && pnpm test"
   },

@@ -1,0 +1,114 @@
+# Label-Based Selection Patterns
+# This example demonstrates how PR labels can trigger specific reviewer
+# selection rules. Label rules take the highest priority — when a matching
+# label is present, author-group rules and defaults are skipped entirely.
+#
+# Priority order: by_label > by_author_group > non_group_members > default
+#
+# When multiple labels match, their `from` clauses are merged by taking
+# the maximum count per group (same strategy as multi-group membership).
+
+groups:
+  - name: "frontend"
+    usernames:
+      - "alice-frontend"
+      - "bob-frontend"
+      - "charlie-frontend"
+
+  - name: "backend"
+    usernames:
+      - "diana-backend"
+      - "eve-backend"
+      - "frank-backend"
+
+  - name: "security"
+    usernames:
+      - "grace-security"
+      - "henry-security"
+
+  - name: "infra"
+    usernames:
+      - "ivan-infra"
+      - "jane-infra"
+
+selection_rules:
+  # Label-triggered rules (highest priority)
+  by_label:
+    # Attach "needs-security-review" to PRs that touch auth, crypto,
+    # or dependency updates — guarantees 2 security reviewers regardless
+    # of who authored the PR.
+    - label: "needs-security-review"
+      from:
+        "security": 2           # 2 security reviewers
+
+    # Attach "needs-frontend-review" when backend changes affect API
+    # contracts consumed by the frontend.
+    - label: "needs-frontend-review"
+      from:
+        "frontend": 2           # 2 frontend reviewers
+
+    # Attach "needs-infra-review" for Terraform, Dockerfile, or CI
+    # pipeline changes.
+    - label: "needs-infra-review"
+      from:
+        "infra": 1              # 1 infra reviewer
+        "backend": 1            # 1 backend reviewer
+
+    # Broad review label — uses wildcard to pull from every group.
+    - label: "needs-broad-review"
+      from:
+        "*": 3                  # 3 reviewers from any group
+
+  # Author-group rules (used when no label matches)
+  by_author_group:
+    - group: "frontend"
+      from:
+        "backend": 1            # 1 backend reviewer
+        "frontend": 1           # 1 frontend peer reviewer
+
+    - group: "backend"
+      from:
+        "frontend": 1           # 1 frontend reviewer
+        "backend": 1            # 1 backend peer reviewer
+
+    - group: "security"
+      from:
+        "backend": 1            # 1 backend reviewer
+        "infra": 1              # 1 infra reviewer
+
+    - group: "infra"
+      from:
+        "backend": 1            # 1 backend reviewer
+        "security": 1           # 1 security reviewer
+
+  # External contributors get cross-team review
+  non_group_members:
+    from:
+      "frontend": 1             # 1 frontend reviewer
+      "backend": 1              # 1 backend reviewer
+
+  # Catch-all default
+  default:
+    from:
+      "*": 2                    # 2 reviewers from any group
+
+# When no label matches and author is in multiple groups, merge rules
+when_author_in_multiple_groups: "merge"
+
+# ─── Multiple label merge example ──────────────────────────────────────
+#
+# If a PR has BOTH "needs-security-review" AND "needs-frontend-review":
+#
+#   needs-security-review  →  { security: 2 }
+#   needs-frontend-review  →  { frontend: 2 }
+#   ─────────────────────────────────────────
+#   Merged result          →  { security: 2, frontend: 2 }
+#
+# The merge takes the maximum count per group, so overlapping groups
+# never exceed the highest single-label request.
+#
+# Example with overlap:
+#   label-A  →  { backend: 1, security: 1 }
+#   label-B  →  { backend: 2 }
+#   ─────────────────────────────────────────
+#   Merged   →  { backend: 2, security: 1 }

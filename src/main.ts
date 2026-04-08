@@ -10,6 +10,7 @@ function extractPRInfoFromContext(): {
   repository: string;
   ref: string;
   author?: string;
+  labels?: string[];
 } {
   // Use GitHub context for PR information
   if (
@@ -49,16 +50,25 @@ function extractPRInfoFromContext(): {
     core.getInput("pr-author") ||
     undefined;
 
+  // Extract labels from PR payload
+  const rawLabels = context.payload.pull_request?.labels;
+  const labels: string[] | undefined = Array.isArray(rawLabels)
+    ? rawLabels
+        .map((l: { name?: string }) => l.name)
+        .filter((name: string | undefined): name is string => !!name)
+    : undefined;
+
   if (!prNumber || !repository || !ref) {
     throw new Error("Unable to extract PR information from context");
   }
 
-  return { prNumber, repository, ref, author };
+  return { prNumber, repository, ref, author, labels };
 }
 
 async function run(): Promise<void> {
   try {
-    const { prNumber, repository, ref, author } = extractPRInfoFromContext();
+    const { prNumber, repository, ref, author, labels } =
+      extractPRInfoFromContext();
 
     //comes from {{secrets.GITHUB_TOKEN}}
     const token = core.getInput("repo-token", { required: true });
@@ -79,7 +89,7 @@ async function run(): Promise<void> {
       githubService,
       config,
       env: { repository, ref },
-      prInfo: { prNumber, repository, ref, author },
+      prInfo: { prNumber, repository, ref, author, labels },
     });
 
     // Run the lottery

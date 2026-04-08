@@ -35,4 +35,5 @@ export interface PRInfo {
   repository: string;
   ref: string;
   author?: string;
+  labels?: string[];
 }
