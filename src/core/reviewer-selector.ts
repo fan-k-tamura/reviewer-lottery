@@ -406,17 +406,27 @@ export class ReviewerSelector {
   }
 
   /**
-   * Pick random items from a list (using Math.random for production)
+   * Pick random items from a list using crypto.getRandomValues for uniform distribution
    */
   pickRandom(items: string[], n: number, ignore: string[]): string[] {
     const picks: string[] = [];
-    const candidates = items.filter((item) => !ignore.includes(item));
+    const candidates = [
+      ...new Set(items.filter((item) => !ignore.includes(item))),
+    ];
 
+    const randomBytes = new Uint32Array(1);
     while (picks.length < n && candidates.length > 0) {
-      const random = Math.floor(Math.random() * candidates.length);
-      const pick = candidates.splice(random, 1)[0];
+      // Rejection sampling to eliminate modulo bias
+      const limit =
+        Math.floor(0x100000000 / candidates.length) * candidates.length;
+      let value: number;
+      do {
+        crypto.getRandomValues(randomBytes);
+        value = randomBytes[0];
+      } while (value >= limit);
 
-      if (!picks.includes(pick)) picks.push(pick);
+      const pick = candidates.splice(value % candidates.length, 1)[0];
+      picks.push(pick);
     }
 
     return picks;
@@ -432,7 +442,9 @@ export class ReviewerSelector {
     seed = 0,
   ): string[] {
     const picks: string[] = [];
-    const candidates = items.filter((item) => !ignore.includes(item));
+    const candidates = [
+      ...new Set(items.filter((item) => !ignore.includes(item))),
+    ];
 
     // Simple seeded random number generator
     let currentSeed = seed;
@@ -444,8 +456,7 @@ export class ReviewerSelector {
     while (picks.length < n && candidates.length > 0) {
       const random = Math.floor(seededRandom() * candidates.length);
       const pick = candidates.splice(random, 1)[0];
-
-      if (!picks.includes(pick)) picks.push(pick);
+      picks.push(pick);
     }
 
     return picks;
