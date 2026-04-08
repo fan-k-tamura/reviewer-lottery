@@ -28,6 +28,9 @@
   ],
   "author": "fan-k-tamura",
   "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0 <21.0.0"
+  },
   "dependencies": {
     "@actions/core": "^1.9.1",
     "@actions/github": "^6.0.1",
