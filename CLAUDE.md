@@ -75,6 +75,7 @@ biome.json                  # Linting/formatting configuration
   - Get PR information, existing reviewers, and PR authors
   - Set reviewers on pull requests
   - Find PRs by Git reference
+  - `getExistingReviewers` MUST union `listRequestedReviewers` with `listReviews` filtered by `COUNTED_REVIEW_STATES` (APPROVED / CHANGES_REQUESTED / DISMISSED). Why: GitHub strips a reviewer from `requested_reviewers` once they submit a review, so a single-endpoint implementation re-picks past reviewers (incl. stale-dismissed after rebase). Uses `Promise.allSettled` to degrade gracefully when `listReviews` transiently fails.
 - **LoggerImpl**: Wraps GitHub Actions core logging with structured output
 - **ActionOutputsImpl**: Manages GitHub Actions outputs and job summaries
 

@@ -3405,15 +3405,23 @@ var ReviewerSelector = class {
     return candidates;
   }
   /**
-   * Pick random items from a list (using Math.random for production)
+   * Pick random items from a list using crypto.getRandomValues for uniform distribution
    */
   pickRandom(items, n, ignore) {
     const picks = [];
-    const candidates = items.filter((item) => !ignore.includes(item));
+    const candidates = [
+      ...new Set(items.filter((item) => !ignore.includes(item)))
+    ];
+    const randomBytes = new Uint32Array(1);
     while (picks.length < n && candidates.length > 0) {
-      const random = Math.floor(Math.random() * candidates.length);
-      const pick = candidates.splice(random, 1)[0];
-      if (!picks.includes(pick)) picks.push(pick);
+      const limit = Math.floor(4294967296 / candidates.length) * candidates.length;
+      let value;
+      do {
+        crypto.getRandomValues(randomBytes);
+        value = randomBytes[0];
+      } while (value >= limit);
+      const pick = candidates.splice(value % candidates.length, 1)[0];
+      picks.push(pick);
     }
     return picks;
   }
@@ -3422,7 +3430,9 @@ var ReviewerSelector = class {
    */
   pickRandomDeterministic(items, n, ignore, seed = 0) {
     const picks = [];
-    const candidates = items.filter((item) => !ignore.includes(item));
+    const candidates = [
+      ...new Set(items.filter((item) => !ignore.includes(item)))
+    ];
     let currentSeed = seed;
     const seededRandom = () => {
       currentSeed = (currentSeed * 9301 + 49297) % 233280;
@@ -3431,7 +3441,7 @@ var ReviewerSelector = class {
     while (picks.length < n && candidates.length > 0) {
       const random = Math.floor(seededRandom() * candidates.length);
       const pick = candidates.splice(random, 1)[0];
-      if (!picks.includes(pick)) picks.push(pick);
+      picks.push(pick);
     }
     return picks;
   }

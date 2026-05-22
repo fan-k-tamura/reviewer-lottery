@@ -27,6 +27,14 @@ jest.mock("@actions/core", () => ({
 
 // Now using TEST_CONFIG from test-helpers
 
+// GitHub PR review states surfaced by the listReviews endpoint.
+type ReviewState =
+  | "APPROVED"
+  | "CHANGES_REQUESTED"
+  | "COMMENTED"
+  | "DISMISSED"
+  | "PENDING";
+
 // Scenario builders - focusing on user intent and business context
 interface TestScenario {
   author: string;
@@ -113,8 +121,11 @@ const givenGitHubAPI = () => {
       });
   };
 
-  const setupExistingReviewers = (existingReviewers: string[] = []) => {
-    return nock("https://api.github.com")
+  const setupExistingReviewers = (
+    existingReviewers: string[] = [],
+    submittedReviews: Array<{ login: string; state: ReviewState }> = [],
+  ) => {
+    nock("https://api.github.com")
       .get(
         `/repos/${TEST_CONFIG.REPOSITORY}/pulls/${TEST_CONFIG.PR_NUMBER}/requested_reviewers`,
       )
@@ -122,7 +133,22 @@ const givenGitHubAPI = () => {
         users: existingReviewers.map((login) => ({ login })),
         teams: [],
       })
-      .persist(); // Allow multiple calls
+      .persist();
+
+    nock("https://api.github.com")
+      .get(
+        `/repos/${TEST_CONFIG.REPOSITORY}/pulls/${TEST_CONFIG.PR_NUMBER}/reviews`,
+      )
+      .query(true)
+      .reply(
+        200,
+        submittedReviews.map((review, idx) => ({
+          id: idx + 1,
+          user: { login: review.login },
+          state: review.state,
+        })),
+      )
+      .persist();
   };
 
   return { setupPullRequest, expectReviewerAssignment, setupExistingReviewers };
@@ -898,7 +924,19 @@ describe("Reviewer Lottery System", () => {
         .get(
           `/repos/${TEST_CONFIG.REPOSITORY}/pulls/${TEST_CONFIG.PR_NUMBER}/requested_reviewers`,
         )
-        .reply(500, { message: "Internal Server Error" });
+        .reply(500, { message: "Internal Server Error" })
+        .persist();
+
+      // listReviews is called in parallel via Promise.all — provide a benign
+      // response so unrelated nock-no-match doesn't mask the requested_reviewers
+      // failure under test.
+      nock("https://api.github.com")
+        .get(
+          `/repos/${TEST_CONFIG.REPOSITORY}/pulls/${TEST_CONFIG.PR_NUMBER}/reviews`,
+        )
+        .query(true)
+        .reply(200, [])
+        .persist();
 
       // Should still proceed with normal reviewer selection (treating as no existing reviewers)
       const _reviewerMock = api.expectReviewerAssignment({
@@ -912,6 +950,231 @@ describe("Reviewer Lottery System", () => {
 
       // Then: system gracefully handles error and proceeds with selection
       // Expectations are performed within the mock
+    });
+
+    // GitHub removes a reviewer from requested_reviewers after they submit a
+    // review. APPROVED and DISMISSED (stale-dismissed by rebase) entries
+    // should be treated as existing; COMMENTED should not (those reviewers
+    // stay in requested_reviewers and would otherwise be double-counted).
+    const submittedReviewCases: Array<{
+      name: string;
+      state: ReviewState;
+      expectation: {
+        count: number;
+        shouldExclude: string[];
+        validCandidates: string[];
+      };
+    }> = [
+      {
+        name: "treats approved reviewers as existing even when not in requested_reviewers",
+        state: "APPROVED",
+        expectation: {
+          count: 1,
+          shouldExclude: ["alice", "bob"],
+          validCandidates: ["charlie", "diana"],
+        },
+      },
+      {
+        name: "treats reviewers with stale-dismissed approvals as existing",
+        state: "DISMISSED",
+        expectation: {
+          count: 1,
+          shouldExclude: ["alice", "bob"],
+          validCandidates: ["charlie", "diana"],
+        },
+      },
+      {
+        name: "treats reviewers with changes-requested reviews as existing",
+        state: "CHANGES_REQUESTED",
+        expectation: {
+          count: 1,
+          shouldExclude: ["alice", "bob"],
+          validCandidates: ["charlie", "diana"],
+        },
+      },
+      {
+        name: "does not treat commented-only reviewers as existing",
+        state: "COMMENTED",
+        expectation: {
+          count: 2,
+          shouldExclude: ["alice"],
+          validCandidates: ["bob", "charlie", "diana"],
+        },
+      },
+    ];
+
+    submittedReviewCases.forEach(({ name, state, expectation }) => {
+      test(name, async () => {
+        const scenario = createScenario({
+          author: "alice",
+          teams: [
+            {
+              name: "backend-team",
+              members: ["alice", "bob", "charlie", "diana"],
+            },
+          ],
+        });
+
+        const configWithRules = {
+          ...scenario.config,
+          selection_rules: {
+            by_author_group: [
+              {
+                group: "backend-team",
+                from: { "backend-team": 2 },
+              },
+            ],
+          },
+        };
+
+        const api = givenGitHubAPI();
+        api.setupPullRequest(scenario.pull);
+        api.setupExistingReviewers([], [{ login: "bob", state }]);
+        api.expectReviewerAssignment(expectation);
+
+        await whenLotteryRuns(configWithRules);
+      });
+    });
+
+    test("ignores reviews with no associated user (e.g. deleted account)", async () => {
+      const scenario = createScenario({
+        author: "alice",
+        teams: [
+          {
+            name: "backend-team",
+            members: ["alice", "bob", "charlie"],
+          },
+        ],
+      });
+
+      const configWithRules = {
+        ...scenario.config,
+        selection_rules: {
+          by_author_group: [
+            {
+              group: "backend-team",
+              from: { "backend-team": 2 },
+            },
+          ],
+        },
+      };
+
+      const api = givenGitHubAPI();
+      api.setupPullRequest(scenario.pull);
+      // Hand-rolled nocks — setupExistingReviewers requires a non-null login.
+      nock("https://api.github.com")
+        .get(
+          `/repos/${TEST_CONFIG.REPOSITORY}/pulls/${TEST_CONFIG.PR_NUMBER}/requested_reviewers`,
+        )
+        .reply(200, { users: [], teams: [] })
+        .persist();
+      nock("https://api.github.com")
+        .get(
+          `/repos/${TEST_CONFIG.REPOSITORY}/pulls/${TEST_CONFIG.PR_NUMBER}/reviews`,
+        )
+        .query(true)
+        .reply(200, [{ id: 1, user: null, state: "APPROVED" }])
+        .persist();
+      api.expectReviewerAssignment({
+        count: 2,
+        shouldExclude: ["alice"],
+        validCandidates: ["bob", "charlie"],
+      });
+
+      await whenLotteryRuns(configWithRules);
+    });
+
+    test("deduplicates a user with multiple review entries across states", async () => {
+      const scenario = createScenario({
+        author: "alice",
+        teams: [
+          {
+            name: "backend-team",
+            members: ["alice", "bob", "charlie", "diana"],
+          },
+        ],
+      });
+
+      const configWithRules = {
+        ...scenario.config,
+        selection_rules: {
+          by_author_group: [
+            {
+              group: "backend-team",
+              from: { "backend-team": 2 },
+            },
+          ],
+        },
+      };
+
+      const api = givenGitHubAPI();
+      api.setupPullRequest(scenario.pull);
+      // bob appears twice — once COMMENTED (not counted), once APPROVED
+      // (counted). The Set in getExistingReviewers should treat bob as one
+      // existing reviewer, not double-count.
+      api.setupExistingReviewers(
+        [],
+        [
+          { login: "bob", state: "COMMENTED" },
+          { login: "bob", state: "APPROVED" },
+        ],
+      );
+      api.expectReviewerAssignment({
+        count: 1,
+        shouldExclude: ["alice", "bob"],
+        validCandidates: ["charlie", "diana"],
+      });
+
+      await whenLotteryRuns(configWithRules);
+    });
+
+    test("falls back to requested-reviewers when listReviews fails", async () => {
+      // Pre-patch behavior should hold when listReviews transiently fails:
+      // currently-requested reviewers are still treated as existing.
+      const scenario = createScenario({
+        author: "alice",
+        teams: [
+          {
+            name: "backend-team",
+            members: ["alice", "bob", "charlie", "diana"],
+          },
+        ],
+      });
+
+      const configWithRules = {
+        ...scenario.config,
+        selection_rules: {
+          by_author_group: [
+            {
+              group: "backend-team",
+              from: { "backend-team": 2 },
+            },
+          ],
+        },
+      };
+
+      const api = givenGitHubAPI();
+      api.setupPullRequest(scenario.pull);
+      nock("https://api.github.com")
+        .get(
+          `/repos/${TEST_CONFIG.REPOSITORY}/pulls/${TEST_CONFIG.PR_NUMBER}/requested_reviewers`,
+        )
+        .reply(200, { users: [{ login: "bob" }], teams: [] })
+        .persist();
+      nock("https://api.github.com")
+        .get(
+          `/repos/${TEST_CONFIG.REPOSITORY}/pulls/${TEST_CONFIG.PR_NUMBER}/reviews`,
+        )
+        .query(true)
+        .reply(500, { message: "Internal Server Error" })
+        .persist();
+      api.expectReviewerAssignment({
+        count: 1,
+        shouldExclude: ["alice", "bob"],
+        validCandidates: ["charlie", "diana"],
+      });
+
+      await whenLotteryRuns(configWithRules);
     });
 
     test("handles empty groups with existing reviewers", async () => {
