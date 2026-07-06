@@ -75,7 +75,7 @@ biome.json                  # Linting/formatting configuration
   - Get PR information, existing reviewers, and PR authors
   - Set reviewers on pull requests
   - Find PRs by Git reference
-  - `getExistingReviewers` MUST union `listRequestedReviewers` with `listReviews` filtered by `COUNTED_REVIEW_STATES` (APPROVED / CHANGES_REQUESTED / DISMISSED). Why: GitHub strips a reviewer from `requested_reviewers` once they submit a review, so a single-endpoint implementation re-picks past reviewers (incl. stale-dismissed after rebase). Uses `Promise.allSettled` to degrade gracefully when `listReviews` transiently fails.
+  - `getExistingReviewers` MUST union `listRequestedReviewers` with `listReviews` filtered by `COUNTED_REVIEW_STATES` (APPROVED / CHANGES_REQUESTED / DISMISSED / COMMENTED). Why: GitHub does not reliably keep a reviewer in `requested_reviewers` once they submit any review — including a comment-only one — so a single-endpoint implementation re-picks past reviewers (incl. stale-dismissed after rebase, or commenters dropped from the pending list). Uses `Promise.allSettled` to degrade gracefully when `listReviews` transiently fails.
 - **LoggerImpl**: Wraps GitHub Actions core logging with structured output
 - **ActionOutputsImpl**: Manages GitHub Actions outputs and job summaries
 
@@ -257,6 +257,7 @@ chore: update dependencies and build configuration
 ### Supply Chain
 - `.npmrc`: `engine-strict=true` (enforces `engines.node` constraint), `minimum-release-age=7d` (blocks packages published less than 7 days ago)
 - `pnpm.overrides` in `package.json`: pins transitive dependencies to resolve `pnpm audit` vulnerabilities
+- **pnpm major version must stay at 10** (matching `.github/workflows/build.yml`'s `pnpm/action-setup` pin) when installing locally or rebuilding `dist/index.js`. pnpm 11 silently stops reading `pnpm.overrides` from `package.json` (it must move to `pnpm-workspace.yaml`, not yet done here), so installing with pnpm 11 lets unpinned/vulnerable transitive versions back into `node_modules` and, if `dist/index.js` is rebuilt in that state, into the bundled output. Use `npx pnpm@10 install` / `npx pnpm@10 run all` if the local default pnpm is newer.
 
 ### Development Build
 - **TypeScript compilation**: `tsc --noEmit` (type checking only, no output files)
