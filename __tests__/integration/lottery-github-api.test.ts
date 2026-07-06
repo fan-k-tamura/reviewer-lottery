@@ -952,10 +952,10 @@ describe("Reviewer Lottery System", () => {
       // Expectations are performed within the mock
     });
 
-    // GitHub removes a reviewer from requested_reviewers after they submit a
-    // review. APPROVED and DISMISSED (stale-dismissed by rebase) entries
-    // should be treated as existing; COMMENTED should not (those reviewers
-    // stay in requested_reviewers and would otherwise be double-counted).
+    // GitHub does not reliably keep a reviewer in requested_reviewers after
+    // they submit any review — including a comment-only one — so APPROVED,
+    // CHANGES_REQUESTED, DISMISSED (stale-dismissed by rebase), and COMMENTED
+    // entries should all be treated as existing.
     const submittedReviewCases: Array<{
       name: string;
       state: ReviewState;
@@ -993,12 +993,12 @@ describe("Reviewer Lottery System", () => {
         },
       },
       {
-        name: "does not treat commented-only reviewers as existing",
+        name: "treats commented reviewers as existing even when not in requested_reviewers",
         state: "COMMENTED",
         expectation: {
-          count: 2,
-          shouldExclude: ["alice"],
-          validCandidates: ["bob", "charlie", "diana"],
+          count: 1,
+          shouldExclude: ["alice", "bob"],
+          validCandidates: ["charlie", "diana"],
         },
       },
     ];
@@ -1109,9 +1109,9 @@ describe("Reviewer Lottery System", () => {
 
       const api = givenGitHubAPI();
       api.setupPullRequest(scenario.pull);
-      // bob appears twice — once COMMENTED (not counted), once APPROVED
-      // (counted). The Set in getExistingReviewers should treat bob as one
-      // existing reviewer, not double-count.
+      // bob appears twice, once per state (both counted). The Set in
+      // getExistingReviewers should treat bob as one existing reviewer,
+      // not double-count.
       api.setupExistingReviewers(
         [],
         [

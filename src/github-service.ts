@@ -4,15 +4,18 @@ import type { Env, GitHubService, Pull } from "./interfaces";
 type Octokit = ReturnType<typeof getOctokit>;
 
 // Review states whose presence implies a past reviewer we should not re-pick.
-// GitHub removes the reviewer from requested_reviewers in all three cases —
-// APPROVED (active approval), CHANGES_REQUESTED (blocking review), and
-// DISMISSED (post-rebase stale-dismiss, where the entry stays in listReviews
-// with state mutated to DISMISSED). COMMENTED is excluded — those reviewers
-// stay in requested_reviewers and would otherwise be double-counted.
+// GitHub does not reliably keep a COMMENTED reviewer in requested_reviewers —
+// observed live, submitting a comment-only review can drop them from the
+// pending list just like APPROVED/CHANGES_REQUESTED do — so COMMENTED is
+// counted here too, on the same basis as DISMISSED (post-rebase
+// stale-dismiss, where the entry stays in listReviews with state mutated to
+// DISMISSED): once someone has submitted any review, they should not be
+// re-picked regardless of whether GitHub still lists them as pending.
 const COUNTED_REVIEW_STATES: ReadonlySet<string> = new Set([
   "APPROVED",
   "CHANGES_REQUESTED",
   "DISMISSED",
+  "COMMENTED",
 ]);
 
 export class GitHubServiceImpl implements GitHubService {
